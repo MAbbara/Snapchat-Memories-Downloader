@@ -574,7 +574,7 @@ if __name__ == '__main__':
         'html_file',
         nargs='?',
         default='html/memories_history.html',
-        help='Path to memories_history.html file (default: html/memories_history.html)'
+        help='Path to memories_history.html file or folder containing it (default: html/memories_history.html)'
     )
     parser.add_argument(
         '--resume',
@@ -598,11 +598,18 @@ if __name__ == '__main__':
     )
 
     args = parser.parse_args()
-    HTML_FILE = args.html_file
+    html_path = args.html_file
+
+    # If path is a directory, look for memories_history.html inside it
+    if os.path.isdir(html_path):
+        html_path = os.path.join(html_path, 'memories_history.html')
+        print(f"Looking for memories_history.html in directory: {html_path}")
+
+    HTML_FILE = html_path
 
     if not os.path.exists(HTML_FILE):
         print(f"Error: {HTML_FILE} not found!")
-        print(f"Usage: python download_memories.py [path/to/memories_history.html] [options]")
+        print(f"Usage: python download_memories.py [path/to/file_or_folder] [options]")
         print(f"Run 'python download_memories.py --help' for more information.")
         sys.exit(1)
 

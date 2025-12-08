@@ -133,14 +133,19 @@ python download_memories.py
 
 By default, the script looks for `html/memories_history.html`. You can specify a different path:
 
+**Specify the HTML file directly:**
 ```bash
 python download_memories.py /path/to/your/memories_history.html
 ```
 
-Or combine with other flags:
-
+**Or specify the folder containing the HTML file:**
 ```bash
-python download_memories.py ~/Downloads/memories_history.html --merge-overlays
+python download_memories.py /path/to/html/folder
+```
+
+**Combine with other flags:**
+```bash
+python download_memories.py ~/Downloads/snapchat-data/html --merge-overlays
 ```
 
 ### Resume Interrupted Download
