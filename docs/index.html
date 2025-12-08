@@ -253,6 +253,33 @@
             text-decoration: none;
             color: white;
         }
+
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin-bottom: 25px;
+            border-radius: 4px;
+        }
+
+        .info-box h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+
+        .info-box ol {
+            margin: 10px 0;
+            padding-left: 25px;
+        }
+
+        .info-box li {
+            margin: 8px 0;
+        }
+
+        .info-box a {
+            color: #667eea;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -262,6 +289,35 @@
 
         <div class="warning">
             <strong>Privacy First:</strong> Your data never leaves your browser. Everything is processed locally on your device.
+        </div>
+
+        <div class="info-box">
+            <h3>📥 First Time? Get Your Snapchat Data</h3>
+            <p>Before using this tool, you need to download your data from Snapchat:</p>
+            <ol>
+                <li><strong>Login</strong> to <a href="https://accounts.snapchat.com/" target="_blank">Snapchat's website</a></li>
+                <li>Click the <strong>menu</strong> in the top left corner
+                    <ul style="list-style: none; padding-left: 15px; margin: 5px 0;">
+                        <li>Mobile: Tap "Accounts"</li>
+                        <li>Desktop: Click "Account Settings"</li>
+                    </ul>
+                </li>
+                <li>Click <strong>"My Data"</strong></li>
+                <li>Select the data you want:
+                    <ul style="list-style: none; padding-left: 15px; margin: 5px 0;">
+                        <li>✅ <strong>Memories</strong> (required for this tool)</li>
+                        <li>✅ <strong>Chat Media</strong> (optional - now separate)</li>
+                        <li>✅ <strong>Shared Stories</strong> (optional - now separate)</li>
+                    </ul>
+                </li>
+                <li>Click <strong>"Submit Request"</strong></li>
+                <li>Wait for Snapchat to email you (24-48 hours)</li>
+                <li>Download the ZIP and extract it</li>
+                <li>Find <code>memories_history.html</code> in the <code>html/</code> folder</li>
+            </ol>
+            <p style="font-size: 14px; margin-top: 15px;">
+                <a href="https://www.reddit.com/r/techsupport/comments/18mkfvv/is_there_a_way_of_exporting_all_snapchat/" target="_blank">More info on Reddit</a>
+            </p>
         </div>
 
         <div class="upload-section" id="uploadSection">

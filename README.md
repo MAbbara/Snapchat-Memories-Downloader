@@ -10,6 +10,30 @@ Download all your Snapchat memories from a data export, preserving metadata
 2. **🐍 Python Script** - Command-line tool for local processing
    (instructions below)
 
+## 📥 Getting Your Snapchat Data
+
+Before using this tool, you need to download your data from Snapchat:
+
+1. **Login** to [Snapchat's website](https://accounts.snapchat.com/)
+2. Click the **menu** in the top left corner
+   - **Mobile**: Tap "Accounts"
+   - **Desktop**: Click "Account Settings"
+3. Click **"My Data"**
+4. Select the data you want to download:
+   - ✅ **Memories** (required for this tool)
+   - ✅ **Chat Media** (optional - now separate from Memories)
+   - ✅ **Shared Stories** (optional - now separate from Memories)
+   - Review all 8 types and select what you need
+5. Click **"Submit Request"**
+6. Wait for Snapchat to email you (can take 24-48 hours)
+7. Download the ZIP file from the email
+8. Extract it - you'll find `memories_history.html` in the `html/` folder
+
+**Note:** Chat Media and Shared Stories used to be included with Memories,
+but are now separate options at the bottom of the list.
+
+[More info on Reddit](https://www.reddit.com/r/techsupport/comments/18mkfvv/is_there_a_way_of_exporting_all_snapchat/)
+
 ## Features
 
 - Downloads all memories from `memories_history.html`
