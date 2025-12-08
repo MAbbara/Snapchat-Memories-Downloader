@@ -129,6 +129,20 @@ python download_memories.py --test
 python download_memories.py
 ```
 
+### Custom HTML File Path
+
+By default, the script looks for `html/memories_history.html`. You can specify a different path:
+
+```bash
+python download_memories.py /path/to/your/memories_history.html
+```
+
+Or combine with other flags:
+
+```bash
+python download_memories.py ~/Downloads/memories_history.html --merge-overlays
+```
+
 ### Resume Interrupted Download
 
 If your download gets interrupted, resume from where you left off:
@@ -154,6 +168,14 @@ python download_memories.py --merge-overlays
 ```
 
 This will composite the `-overlay` image on top of the `-main` image and save only the merged result. Videos are not merged and will remain as separate files.
+
+### View All Options
+
+To see all available options:
+
+```bash
+python download_memories.py --help
+```
 
 ### Deactivate Virtual Environment
 

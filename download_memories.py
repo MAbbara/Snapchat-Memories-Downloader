@@ -8,6 +8,7 @@ import re
 import json
 import os
 import sys
+import argparse
 from pathlib import Path
 from html.parser import HTMLParser
 from datetime import datetime
@@ -565,18 +566,51 @@ def download_all_memories(
 
 
 if __name__ == '__main__':
-    HTML_FILE = 'html/memories_history.html'
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='Download Snapchat memories with metadata preservation'
+    )
+    parser.add_argument(
+        'html_file',
+        nargs='?',
+        default='html/memories_history.html',
+        help='Path to memories_history.html file (default: html/memories_history.html)'
+    )
+    parser.add_argument(
+        '--resume',
+        action='store_true',
+        help='Resume interrupted download'
+    )
+    parser.add_argument(
+        '--retry-failed',
+        action='store_true',
+        help='Retry only failed downloads'
+    )
+    parser.add_argument(
+        '--test',
+        action='store_true',
+        help='Test mode: download only first 3 files'
+    )
+    parser.add_argument(
+        '--merge-overlays',
+        action='store_true',
+        help='Merge overlay images on top of main images (images only)'
+    )
+
+    args = parser.parse_args()
+    HTML_FILE = args.html_file
 
     if not os.path.exists(HTML_FILE):
         print(f"Error: {HTML_FILE} not found!")
-        print("Please run this script from the directory containing the 'html' folder.")
+        print(f"Usage: python download_memories.py [path/to/memories_history.html] [options]")
+        print(f"Run 'python download_memories.py --help' for more information.")
         sys.exit(1)
 
-    # Check for flags
-    resume_mode = '--resume' in sys.argv
-    retry_failed_mode = '--retry-failed' in sys.argv
-    test_mode = '--test' in sys.argv
-    merge_overlays_mode = '--merge-overlays' in sys.argv
+    # Extract flags
+    resume_mode = args.resume
+    retry_failed_mode = args.retry_failed
+    test_mode = args.test
+    merge_overlays_mode = args.merge_overlays
 
     # Optional: limit number of downloads for testing
     # Pass --test to download only first 3 files
