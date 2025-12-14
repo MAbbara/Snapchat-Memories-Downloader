@@ -973,7 +973,9 @@
     async function mergeVideoOverlay(
       mainData,
       overlayData,
-      progressCallback
+      progressCallback,
+      overlayIsImage = false,
+      overlayExt = '.mp4'
     ) {
       const ffmpeg = await initFFmpeg();
 
@@ -984,7 +986,9 @@
       try {
         // Write input files to FFmpeg virtual filesystem
         await ffmpeg.writeFile("main.mp4", new Uint8Array(mainData));
-        await ffmpeg.writeFile("overlay.mp4", new Uint8Array(overlayData));
+
+        const overlayFilename = overlayIsImage ? `overlay${overlayExt}` : 'overlay.mp4';
+        await ffmpeg.writeFile(overlayFilename, new Uint8Array(overlayData));
 
         // Set up progress logging
         ffmpeg.on("progress", ({ progress }) => {
@@ -994,36 +998,67 @@
           }
         });
 
-        // FFmpeg command arguments
-        const args = [
-          "-i",
-          "main.mp4",
-          "-i",
-          "overlay.mp4",
-          "-filter_complex",
-          "[0:v]fps=30,setsar=1[base];" +
-          "[1:v]scale=w=iw(base):h=ih(base),fps=30,setsar=1," +
-          "loop=loop=-1:size=32767:start=0,setpts=N/FRAME_RATE/TB[ovr];" +
-          "[base][ovr]overlay=format=auto:shortest=1[outv]",
-          "-map",
-          "[outv]",
-          "-map",
-          "0:a?",
-          "-c:v",
-          "libx264",
-          "-preset",
-          "ultrafast", // Use ultrafast in browser for speed
-          "-crf",
-          "23",
-          "-pix_fmt",
-          "yuv420p",
-          "-c:a",
-          "copy",
-          "-movflags",
-          "+faststart",
-          "-y",
-          "output.mp4",
-        ];
+        // FFmpeg command arguments — handle image overlay vs video overlay
+        let args;
+        if (overlayIsImage) {
+          // overlay is an image (png/jpg/etc.)
+          args = [
+            "-i",
+            "main.mp4",
+            "-loop",
+            "1",
+            "-i",
+            overlayFilename,
+            "-filter_complex",
+            "[1:v]scale=iw:ih,setsar=1[ovr];[0:v][ovr]overlay=format=auto:shortest=1[outv]",
+            "-map",
+            "[outv]",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "-y",
+            "output.mp4",
+          ];
+        } else {
+          // overlay is a video
+          args = [
+            "-i",
+            "main.mp4",
+            "-i",
+            overlayFilename,
+            "-filter_complex",
+            "[0:v]fps=30,setsar=1[base];[1:v]fps=30,setsar=1,loop=loop=-1:size=32767:start=0,setpts=N/FRAME_RATE/TB[ovr];[base][ovr]overlay=format=auto:shortest=1[outv]",
+            "-map",
+            "[outv]",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "-y",
+            "output.mp4",
+          ];
+        }
 
         // Execute FFmpeg
         await ffmpeg.exec(args);
@@ -1540,9 +1575,11 @@
                     "info"
                   );
 
-                  // Get main and overlay files
+                  // Get main and overlay files (preserve original filenames/extensions)
                   let mainData = null;
                   let overlayData = null;
+                  let mainName = null;
+                  let overlayName = null;
 
                   for (const filename of files) {
                     const fileData = await innerZip.files[filename].async(
@@ -1550,13 +1587,22 @@
                     );
                     if (filename.toLowerCase().includes("-overlay")) {
                       overlayData = fileData;
+                      overlayName = filename;
                     } else {
                       mainData = fileData;
+                      mainName = filename;
                     }
                   }
 
                   if (mainData && overlayData) {
-                    // Merge videos using FFmpeg.wasm
+                    // Determine overlay extension and whether it's an image
+                    const overlayExt = overlayName && overlayName.includes('.')
+                      ? overlayName.substring(overlayName.lastIndexOf('.'))
+                      : '.mp4';
+                    const overlayExtNoDot = overlayExt.replace('.', '').toLowerCase();
+                    const overlayIsImage = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(overlayExtNoDot);
+
+                    // Merge videos using FFmpeg.wasm (supports image overlay)
                     const mergedData = await mergeVideoOverlay(
                       mainData,
                       overlayData,
@@ -1565,7 +1611,9 @@
                           `    Video merge progress: ${progress}%`,
                           "info"
                         );
-                      }
+                      },
+                      overlayIsImage,
+                      overlayExt
                     );
 
                     const filename = `${fileNum}${extension}`;
@@ -1621,32 +1669,34 @@
             } else {
               // Save files separately (not merging, no overlay, or single file)
               const fileDate = parseSnapchatDate(metadata.date);
-              for (const filename of files) {
-                let fileData = await innerZip.files[filename].async(
-                  "arraybuffer"
-                );
-                const isOverlay = filename.toLowerCase().includes("-overlay");
-                const newFilename = isOverlay
-                  ? `${fileNum}-overlay${extension}`
-                  : `${fileNum}-main${extension}`;
+                for (const filename of files) {
+                    let fileData = await innerZip.files[filename].async(
+                      "arraybuffer"
+                    );
+                    const isOverlay = filename.toLowerCase().includes("-overlay");
+                    // Preserve original extension from the inner filename if present
+                    const origExt = filename.includes('.') ? filename.substring(filename.lastIndexOf('.')) : extension;
+                    const newFilename = isOverlay
+                      ? `${fileNum}-overlay${origExt}`
+                      : `${fileNum}-main${origExt}`;
 
-                // Add EXIF metadata to images
-                if (metadata.media_type === "Image") {
-                  fileData = await addExifMetadata(
-                    fileData,
-                    metadata.date,
-                    metadata.latitude,
-                    metadata.longitude
-                  );
-                }
+                    // Add EXIF metadata to images
+                    if (metadata.media_type === "Image") {
+                      fileData = await addExifMetadata(
+                        fileData,
+                        metadata.date,
+                        metadata.latitude,
+                        metadata.longitude
+                      );
+                    }
 
-                zip.file(newFilename, fileData, { date: fileDate });
-                metadata.files.push({
-                  path: newFilename,
-                  size: fileData.byteLength,
-                  type: isOverlay ? "overlay" : "main",
-                });
-              }
+                    zip.file(newFilename, fileData, { date: fileDate });
+                    metadata.files.push({
+                      path: newFilename,
+                      size: fileData.byteLength,
+                      type: isOverlay ? "overlay" : "main",
+                    });
+                  }
               addLog(`  Extracted ${files.length} files from ZIP`, "success");
             }
           } else {
