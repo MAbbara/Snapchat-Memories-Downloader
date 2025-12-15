@@ -1516,11 +1516,11 @@
 
           if (mainWidth && mainHeight) {
             // We have dimensions - use them
-            filterComplex = `[1:v]scale=${mainWidth}:${mainHeight}[ovr];[0:v][ovr]overlay=shortest=1`;
+            filterComplex = `[1:v]scale=${mainWidth}:${mainHeight}[ovr];[0:v][ovr]overlay=shortest=1[outv]`;
             addLog(`  Scaling overlay to ${mainWidth}x${mainHeight}`, 'info', 'ffmpeg');
           } else {
             // No dimensions - overlay keeps its size
-            filterComplex = `[0:v][1:v]overlay=shortest=1`;
+            filterComplex = `[0:v][1:v]overlay=shortest=1[outv]`;
             addLog('  Using overlay at original size (no scaling)', 'warning', 'ffmpeg');
           }
 
@@ -1533,6 +1533,8 @@
             overlayFilename,
             "-filter_complex",
             filterComplex,
+            "-map",
+            "[outv]", // Map the filtered video output
             "-map",
             "0:a?", // Map audio from main video
             "-c:v",
@@ -2156,7 +2158,9 @@
             if (detectedOverlayExt) overlayExt = detectedOverlayExt;
             if (!overlayExt) overlayExt = '.mp4';
             const overlayExtNoDot = overlayExt.replace('.', '').toLowerCase();
-            const overlayIsImage = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(overlayExtNoDot);
+            // Treat WebP and GIF as video to preserve animation frames
+            // Static images: PNG, JPG, JPEG only
+            const overlayIsImage = ['png', 'jpg', 'jpeg'].includes(overlayExtNoDot);
 
             addLog(`  Merging video overlay (this may take a minute)...`, "info");
 
@@ -2504,7 +2508,9 @@
                     if (detectedOverlayExt) overlayExt = detectedOverlayExt;
                     if (!overlayExt) overlayExt = '.mp4';
                     const overlayExtNoDot = overlayExt.replace('.', '').toLowerCase();
-                    const overlayIsImage = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(overlayExtNoDot);
+                    // Treat WebP and GIF as video to preserve animation frames
+                    // Static images: PNG, JPG, JPEG only
+                    const overlayIsImage = ['png', 'jpg', 'jpeg'].includes(overlayExtNoDot);
 
                     // Merge videos using FFmpeg.wasm (supports image overlay)
                     const mergedData = await mergeVideoOverlay(
