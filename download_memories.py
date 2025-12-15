@@ -265,6 +265,7 @@ def merge_video_overlay(
 
     try:
         # Build FFmpeg command
+        # Use scale2ref to match overlay dimensions to main video
         cmd = [
             'ffmpeg',
             '-i', str(main_path),
@@ -272,8 +273,9 @@ def merge_video_overlay(
             '-filter_complex',
             (
                 '[0:v]fps=30,setsar=1[base];'
-                '[1:v]scale=w=iw(base):h=ih(base),fps=30,setsar=1,'
-                'loop=loop=-1:size=32767:start=0,setpts=N/FRAME_RATE/TB[ovr];'
+                '[1:v]fps=30,setsar=1,'
+                'loop=loop=-1:size=32767:start=0,setpts=N/FRAME_RATE/TB[ovr_tmp];'
+                '[ovr_tmp][base]scale2ref[ovr][base];'
                 '[base][ovr]overlay=format=auto:shortest=1[outv]'
             ),
             '-map', '[outv]',

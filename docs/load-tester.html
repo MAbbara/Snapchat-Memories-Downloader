@@ -542,11 +542,12 @@
             "-y", "output.mp4"
           ];
         } else {
+          // overlay is a video - use scale2ref to match dimensions
           args = [
             "-i", "main.mp4",
             "-i", overlayFilename,
             "-filter_complex",
-            "[0:v]fps=30,setsar=1[base];[1:v]fps=30,setsar=1,loop=loop=-1:size=32767:start=0,setpts=N/FRAME_RATE/TB[ovr];[base][ovr]overlay=format=auto:shortest=1[outv]",
+            "[0:v]fps=30,setsar=1[base];[1:v]fps=30,setsar=1,loop=loop=-1:size=32767:start=0,setpts=N/FRAME_RATE/TB[ovr_tmp];[ovr_tmp][base]scale2ref[ovr][base];[base][ovr]overlay=format=auto:shortest=1[outv]",
             "-map", "[outv]",
             "-map", "0:a?",
             "-c:v", "libx264",
