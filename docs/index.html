@@ -1068,7 +1068,8 @@
     }
 
     /**
-     * Add EXIF metadata (GPS and date) to JPEG image
+     * Add EXIF metadata (GPS and date) to image
+     * Preserves original image format (JPEG, PNG, WebP, etc.)
      * @param {ArrayBuffer} imageData - Image data
      * @param {string} dateStr - Date string from Snapchat
      * @param {string} latitude - Latitude as string
@@ -1084,12 +1085,30 @@
       try {
         // Convert ArrayBuffer to base64 for piexif
         const uint8Array = new Uint8Array(imageData);
+
+        // Detect image format from magic bytes
+        let mimeType = "image/jpeg"; // default
+        if (uint8Array[0] === 0x89 && uint8Array[1] === 0x50 && uint8Array[2] === 0x4E && uint8Array[3] === 0x47) {
+          mimeType = "image/png";
+        } else if (uint8Array[0] === 0x52 && uint8Array[1] === 0x49 && uint8Array[2] === 0x46 && uint8Array[3] === 0x46) {
+          mimeType = "image/webp";
+        } else if (uint8Array[0] === 0xFF && uint8Array[1] === 0xD8) {
+          mimeType = "image/jpeg";
+        }
+
+        // piexif.insert() only works with JPEG
+        // For PNG/WebP, we can't add EXIF via piexif.js, so just return original
+        if (mimeType !== "image/jpeg") {
+          console.log(`Skipping EXIF for ${mimeType} (piexif.js only supports JPEG)`);
+          return imageData;
+        }
+
         let binary = "";
         for (let i = 0; i < uint8Array.byteLength; i++) {
           binary += String.fromCharCode(uint8Array[i]);
         }
         const base64 = btoa(binary);
-        const dataUrl = "data:image/jpeg;base64," + base64;
+        const dataUrl = "data:" + mimeType + ";base64," + base64;
 
         // Create EXIF object
         const exifObj = { "0th": {}, Exif: {}, GPS: {} };

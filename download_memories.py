@@ -159,7 +159,8 @@ def add_exif_metadata(
     longitude: str
 ) -> bytes:
     """
-    Add EXIF metadata (GPS and date) to JPEG image data.
+    Add EXIF metadata (GPS and date) to image data.
+    Preserves original image format (JPEG, PNG, WebP, etc.).
     Returns new image data with EXIF embedded.
     """
     if piexif is None or Image is None:
@@ -172,6 +173,7 @@ def add_exif_metadata(
 
         # Load image
         img = Image.open(io.BytesIO(image_data))
+        original_format = img.format  # Preserve original format
 
         # Create EXIF dict
         exif_dict = {"0th": {}, "Exif": {}, "GPS": {}}
@@ -204,9 +206,30 @@ def add_exif_metadata(
         # Convert to bytes
         exif_bytes = piexif.dump(exif_dict)
 
-        # Save image with EXIF
+        # Save image with EXIF, preserving original format
         output = io.BytesIO()
-        img.save(output, format='JPEG', quality=95, exif=exif_bytes)
+
+        # JPEG supports full EXIF (GPS + timestamp)
+        if original_format in ['JPEG', 'JPG']:
+            # Convert RGBA to RGB if needed (JPEG doesn't support alpha)
+            if img.mode == 'RGBA':
+                img = img.convert('RGB')
+            img.save(output, format='JPEG', quality=95, exif=exif_bytes)
+        # PNG: Limited EXIF support (timestamp only in older versions, full eXIf chunk in PNG 3.0+)
+        # Try to add EXIF, but it may only preserve timestamp, not GPS
+        elif original_format == 'PNG':
+            try:
+                img.save(output, format='PNG', exif=exif_bytes)
+            except Exception:
+                # If EXIF fails, save without it (some PNG encoders don't support eXIf chunk)
+                img.save(output, format='PNG')
+        # WebP supports full EXIF
+        elif original_format == 'WEBP':
+            img.save(output, format='WEBP', quality=95, exif=exif_bytes)
+        # For other formats, save without EXIF to avoid errors
+        else:
+            return image_data
+
         return output.getvalue()
 
     except Exception as e:
@@ -489,7 +512,7 @@ def download_and_extract(
                     else:
                         output_filename = f"{file_num}-main{file_ext}"
 
-                    # Add EXIF metadata to images
+                    # Add EXIF metadata to images (preserves original format)
                     is_image = file_ext.lower() in ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif']
                     if is_image:
                         file_data = add_exif_metadata(file_data, date_str, latitude, longitude)
