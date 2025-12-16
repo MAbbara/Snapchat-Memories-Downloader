@@ -15,6 +15,7 @@ from datetime import datetime
 import zipfile
 import io
 import subprocess
+import hashlib
 
 try:
     import requests
@@ -374,13 +375,17 @@ def download_and_extract(
     date_str: str = 'Unknown',
     latitude: str = 'Unknown',
     longitude: str = 'Unknown',
-    overlays_only: bool = False
+    overlays_only: bool = False,
+    use_timestamp_filenames: bool = False
 ) -> list:
     """
     Download a file from URL. If it's a ZIP with overlay, extract and optionally merge.
     Adds EXIF metadata (GPS and date) to images.
     Returns list of dicts with file info: [{'path': path, 'size': size, 'type': 'main'/'overlay'/'merged'}]
     Returns empty list if overlays_only=True and file has no overlay.
+
+    Args:
+        use_timestamp_filenames: If True, name files as YYYY.MM.DD-HH:MM:SS.ext instead of sequential numbers
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
@@ -440,7 +445,7 @@ def download_and_extract(
                         # Add EXIF metadata to merged image
                         merged_data = add_exif_metadata(merged_data, date_str, latitude, longitude)
 
-                        output_filename = f"{file_num}{extension}"
+                        output_filename = generate_filename(date_str, extension, use_timestamp_filenames, file_num)
                         output_path = base_path / output_filename
 
                         with open(output_path, 'wb') as f:
@@ -463,7 +468,7 @@ def download_and_extract(
                         # Create temporary files for main and overlay
                         temp_main = base_path / f"{file_num}-temp-main{extension}"
                         temp_overlay = base_path / f"{file_num}-temp-overlay{extension}"
-                        output_filename = f"{file_num}{extension}"
+                        output_filename = generate_filename(date_str, extension, use_timestamp_filenames, file_num)
                         output_path = base_path / output_filename
 
                         # Write temporary files
@@ -489,14 +494,19 @@ def download_and_extract(
                             set_file_timestamp(output_path, timestamp)
 
                             # Delete any previously saved -main/-overlay files
-                            main_file = base_path / f"{file_num}-main{extension}"
-                            overlay_file = base_path / f"{file_num}-overlay{extension}"
-                            if main_file.exists():
-                                main_file.unlink()
-                                print(f"    Deleted separate file: {file_num}-main{extension}")
-                            if overlay_file.exists():
-                                overlay_file.unlink()
-                                print(f"    Deleted separate file: {file_num}-overlay{extension}")
+                            # Generate base filename to construct the -main and -overlay filenames
+                            base_filename = generate_filename(date_str, extension, use_timestamp_filenames, file_num)
+                            base_name_no_ext = base_filename.rsplit('.', 1)[0]  # Remove extension
+
+                            # Check for main file with any extension
+                            for potential_main in base_path.glob(f"{base_name_no_ext}-main.*"):
+                                potential_main.unlink()
+                                print(f"    Deleted separate file: {potential_main.name}")
+
+                            # Check for overlay file with any extension
+                            for potential_overlay in base_path.glob(f"{base_name_no_ext}-overlay.*"):
+                                potential_overlay.unlink()
+                                print(f"    Deleted separate file: {potential_overlay.name}")
 
                             merge_attempted = True
                         else:
@@ -528,10 +538,14 @@ def download_and_extract(
                     file_data = file_info['data']
                     file_ext = file_info['ext']
 
+                    # Generate base filename, then add -main/-overlay suffix
+                    base_filename = generate_filename(date_str, file_ext, use_timestamp_filenames, file_num)
+                    base_name_no_ext = base_filename.rsplit('.', 1)[0]  # Remove extension
+
                     if file_type == 'overlay':
-                        output_filename = f"{file_num}-overlay{file_ext}"
+                        output_filename = f"{base_name_no_ext}-overlay{file_ext}"
                     else:
-                        output_filename = f"{file_num}-main{file_ext}"
+                        output_filename = f"{base_name_no_ext}-main{file_ext}"
 
                     # Add EXIF metadata to images (preserves original format)
                     is_image_file = file_ext.lower() in ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif']
@@ -576,7 +590,7 @@ def download_and_extract(
                 print("    This might be an HTML error page or expired download link")
 
         # Save as regular file
-        output_filename = f"{file_num}{extension}"
+        output_filename = generate_filename(date_str, extension, use_timestamp_filenames, file_num)
         output_path = base_path / output_filename
 
         # Add EXIF metadata to images
@@ -624,6 +638,281 @@ def set_file_timestamp(file_path: Path, timestamp: float | None) -> None:
     """Set file modification and access times to the given timestamp."""
     if timestamp:
         os.utime(file_path, (timestamp, timestamp))
+
+
+def generate_filename(date_str: str, extension: str, use_timestamp: bool = False, fallback_num: str = "00") -> str:
+    """
+    Generate filename based on configuration.
+
+    Args:
+        date_str: Snapchat date string (e.g., "2025-11-30 00:31:09 UTC")
+        extension: File extension (e.g., ".mp4")
+        use_timestamp: If True, use timestamp format; if False, use sequential number
+        fallback_num: Sequential number to use if use_timestamp is False
+
+    Returns:
+        Filename string (e.g., "2025.11.30-00:31:09.mp4" or "01.mp4")
+    """
+    if use_timestamp:
+        try:
+            # Parse date string: "2025-11-30 00:31:09 UTC" -> "2025.11.30-00:31:09"
+            date_str_clean = date_str.replace(' UTC', '').strip()
+            # Replace first two hyphens and space with dots/hyphen
+            # "2025-11-30 00:31:09" -> "2025.11.30-00:31:09"
+            parts = date_str_clean.split(' ')
+            if len(parts) == 2:
+                date_part = parts[0].replace('-', '.')  # "2025.11.30"
+                time_part = parts[1]  # "00:31:09"
+                filename = f"{date_part}-{time_part}{extension}"
+                return filename
+            else:
+                # Fallback to sequential if date format is unexpected
+                print(f"    Warning: Unexpected date format '{date_str}', using sequential number")
+                return f"{fallback_num}{extension}"
+        except Exception as e:
+            print(f"    Warning: Could not parse date for filename '{date_str}': {e}, using sequential number")
+            return f"{fallback_num}{extension}"
+    else:
+        return f"{fallback_num}{extension}"
+
+
+def compute_file_hash(file_path: Path) -> str:
+    """Compute MD5 hash of a file."""
+    md5_hash = hashlib.md5()
+    with open(file_path, 'rb') as f:
+        # Read file in chunks to handle large files
+        for chunk in iter(lambda: f.read(8192), b''):
+            md5_hash.update(chunk)
+    return md5_hash.hexdigest()
+
+
+def detect_and_remove_duplicates(folder_path: Path) -> dict:
+    """
+    Detect and remove duplicate files based on MD5 hash, filesize, and modification date.
+    Returns dict with statistics: {'duplicates_found': int, 'files_deleted': int, 'space_saved': int}
+    """
+    print("\n" + "=" * 60)
+    print("Scanning for duplicate files...")
+    print("=" * 60)
+
+    # Get all files in the folder (excluding metadata.json)
+    all_files = [f for f in folder_path.iterdir() if f.is_file() and f.name != 'metadata.json']
+
+    if not all_files:
+        print("No files found to check for duplicates")
+        return {'duplicates_found': 0, 'files_deleted': 0, 'space_saved': 0}
+
+    # Build file info: {file_path: {'md5': str, 'size': int, 'mtime': float}}
+    file_info = {}
+    print(f"Analyzing {len(all_files)} files...")
+
+    for file_path in all_files:
+        try:
+            stat = file_path.stat()
+            md5 = compute_file_hash(file_path)
+            file_info[file_path] = {
+                'md5': md5,
+                'size': stat.st_size,
+                'mtime': stat.st_mtime
+            }
+        except Exception as e:
+            print(f"  Warning: Could not analyze {file_path.name}: {e}")
+
+    # Group files by (md5, size, mtime)
+    groups = {}
+    for file_path, info in file_info.items():
+        key = (info['md5'], info['size'], info['mtime'])
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(file_path)
+
+    # Find duplicate groups (groups with more than 1 file)
+    duplicate_groups = {k: v for k, v in groups.items() if len(v) > 1}
+
+    if not duplicate_groups:
+        print("No duplicate files found!")
+        return {'duplicates_found': 0, 'files_deleted': 0, 'space_saved': 0}
+
+    # Process duplicates: keep first file in each group, delete the rest
+    total_duplicates = 0
+    files_deleted = 0
+    space_saved = 0
+
+    print(f"\nFound {len(duplicate_groups)} duplicate group(s):")
+
+    for (md5, size, mtime), file_list in duplicate_groups.items():
+        total_duplicates += len(file_list)
+        print(f"\n  Duplicate group (MD5: {md5[:8]}..., Size: {size:,} bytes):")
+
+        # Keep the first file, delete the rest
+        keep_file = file_list[0]
+        print(f"    KEEP: {keep_file.name}")
+
+        for dup_file in file_list[1:]:
+            try:
+                dup_file.unlink()
+                files_deleted += 1
+                space_saved += size
+                print(f"    DELETED: {dup_file.name}")
+            except Exception as e:
+                print(f"    ERROR deleting {dup_file.name}: {e}")
+
+    print("\n" + "=" * 60)
+    print(f"Duplicate removal complete!")
+    print(f"  Duplicate files found: {total_duplicates}")
+    print(f"  Files deleted: {files_deleted}")
+    print(f"  Space saved: {space_saved:,} bytes ({space_saved / (1024*1024):.2f} MB)")
+    print("=" * 60)
+
+    return {
+        'duplicates_found': total_duplicates,
+        'files_deleted': files_deleted,
+        'space_saved': space_saved
+    }
+
+
+def join_multi_snaps(folder_path: Path, time_threshold_seconds: int = 10) -> dict:
+    """
+    Detect and join videos that were part of multi-snap stories.
+    Groups videos by timestamp (within time_threshold_seconds) and concatenates them.
+    Returns dict with statistics: {'groups_found': int, 'videos_joined': int, 'files_deleted': int}
+    """
+    if not ffmpeg_available:
+        print("\nWarning: FFmpeg not available, cannot join multi-snaps")
+        return {'groups_found': 0, 'videos_joined': 0, 'files_deleted': 0}
+
+    print("\n" + "=" * 60)
+    print("Detecting multi-snap videos...")
+    print("=" * 60)
+
+    # Get all video files in the folder
+    video_extensions = ['.mp4', '.mov', '.avi']
+    all_videos = [
+        f for f in folder_path.iterdir()
+        if f.is_file() and f.suffix.lower() in video_extensions
+    ]
+
+    if len(all_videos) < 2:
+        print("Not enough videos to check for multi-snaps")
+        return {'groups_found': 0, 'videos_joined': 0, 'files_deleted': 0}
+
+    # Get video timestamps (modification time)
+    video_info = []
+    for video_path in all_videos:
+        stat = video_path.stat()
+        video_info.append({
+            'path': video_path,
+            'mtime': stat.st_mtime
+        })
+
+    # Sort by timestamp
+    video_info.sort(key=lambda x: x['mtime'])
+
+    # Group videos by timestamp proximity (within time_threshold_seconds)
+    groups = []
+    current_group = [video_info[0]]
+
+    for i in range(1, len(video_info)):
+        time_diff = abs(video_info[i]['mtime'] - current_group[-1]['mtime'])
+
+        if time_diff <= time_threshold_seconds:
+            # Add to current group
+            current_group.append(video_info[i])
+        else:
+            # Save current group and start new one
+            if len(current_group) > 1:
+                groups.append(current_group)
+            current_group = [video_info[i]]
+
+    # Don't forget the last group
+    if len(current_group) > 1:
+        groups.append(current_group)
+
+    if not groups:
+        print("No multi-snap video groups found")
+        return {'groups_found': 0, 'videos_joined': 0, 'files_deleted': 0}
+
+    print(f"\nFound {len(groups)} multi-snap group(s):")
+
+    total_videos_joined = 0
+    files_deleted = 0
+
+    for group_idx, group in enumerate(groups, start=1):
+        print(f"\n  Group {group_idx} ({len(group)} videos):")
+        for video in group:
+            print(f"    - {video['path'].name}")
+
+        # Create output filename from first video in group
+        first_video = group[0]['path']
+        output_name = first_video.stem + '-joined' + first_video.suffix
+        output_path = folder_path / output_name
+
+        # Create concat file list for FFmpeg
+        concat_list_path = folder_path / f'concat_list_{group_idx}.txt'
+        try:
+            with open(concat_list_path, 'w', encoding='utf-8') as f:
+                for video in group:
+                    # FFmpeg concat demuxer requires escaped paths
+                    escaped_path = str(video['path'].absolute()).replace("'", "'\\''")
+                    f.write(f"file '{escaped_path}'\n")
+
+            # Run FFmpeg to concatenate videos
+            cmd = [
+                'ffmpeg',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', str(concat_list_path),
+                '-c', 'copy',  # Copy streams without re-encoding
+                '-y',
+                str(output_path)
+            ]
+
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=300,
+                check=False
+            )
+
+            # Check if output was created successfully
+            if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1000:
+                print(f"    Joined: {output_name} ({output_path.stat().st_size:,} bytes)")
+
+                # Set timestamp to match first video
+                first_stat = first_video.stat()
+                os.utime(output_path, (first_stat.st_atime, first_stat.st_mtime))
+
+                # Delete original videos
+                for video in group:
+                    video['path'].unlink()
+                    files_deleted += 1
+
+                total_videos_joined += len(group)
+            else:
+                error_msg = result.stderr.decode('utf-8', errors='ignore')
+                print(f"    ERROR: Failed to join videos")
+                print(f"    FFmpeg error: {error_msg[-200:]}")
+
+        except Exception as e:
+            print(f"    ERROR: {str(e)}")
+        finally:
+            # Clean up concat list file
+            if concat_list_path.exists():
+                concat_list_path.unlink()
+
+    print("\n" + "=" * 60)
+    print(f"Multi-snap joining complete!")
+    print(f"  Groups found: {len(groups)}")
+    print(f"  Videos joined: {total_videos_joined}")
+    print(f"  Files deleted: {files_deleted}")
+    print("=" * 60)
+
+    return {
+        'groups_found': len(groups),
+        'videos_joined': total_videos_joined,
+        'files_deleted': files_deleted
+    }
 
 
 def initialize_metadata(memories: list, output_path: Path) -> list:
@@ -799,12 +1088,19 @@ def download_all_memories(
     defer_video_overlays: bool = False,
     videos_only: bool = False,
     pictures_only: bool = False,
-    overlays_only: bool = False
+    overlays_only: bool = False,
+    use_timestamp_filenames: bool = False,
+    remove_duplicates: bool = False,
+    join_multi_snaps: bool = False
 ) -> None:
     """Download all memories with sequential naming and metadata preservation.
 
     If defer_video_overlays is True, videos with overlays are saved as -main/-overlay
     files during download, then merged at the end.
+
+    If remove_duplicates is True, duplicate files are detected and removed after download.
+
+    If join_multi_snaps is True, videos taken within 10 seconds are automatically joined.
     """
 
     # Parse HTML to get all memories
@@ -884,7 +1180,8 @@ def download_all_memories(
                 memory['url'], output_path, file_num, extension, merge_overlays,
                 defer_video_overlays,
                 metadata['date'], metadata['latitude'], metadata['longitude'],
-                overlays_only
+                overlays_only,
+                use_timestamp_filenames
             )
 
             # Check if file was skipped due to overlays_only mode
@@ -953,7 +1250,7 @@ def download_all_memories(
                 try:
                     # Determine output filename
                     extension = main_file.suffix
-                    output_filename = f"{file_num}{extension}"
+                    output_filename = generate_filename(metadata['date'], extension, use_timestamp_filenames, file_num)
                     merged_file = output_path / output_filename
 
                     # Merge videos
@@ -1002,6 +1299,14 @@ def download_all_memories(
     print("Download complete!")
     print(f"Files saved to: {output_path.absolute()}")
     print(f"Metadata saved to: {metadata_file.absolute()}")
+
+    # Remove duplicates if requested
+    if remove_duplicates:
+        detect_and_remove_duplicates(output_path)
+
+    # Join multi-snaps if requested
+    if join_multi_snaps:
+        join_multi_snaps(output_path)
 
     # Summary
     successful = sum(1 for m in metadata_list if m.get('status') == 'success')
@@ -1082,6 +1387,21 @@ if __name__ == '__main__':
         metavar='FOLDER',
         help='Merge existing -main/-overlay file pairs in the specified folder (does NOT delete originals)'
     )
+    parser.add_argument(
+        '--timestamp-filenames',
+        action='store_true',
+        help='Name files as YYYY.MM.DD-HH:MM:SS.ext based on capture date for easy sorting'
+    )
+    parser.add_argument(
+        '--remove-duplicates',
+        action='store_true',
+        help='Automatically detect and remove duplicate files based on MD5 hash, filesize, and date'
+    )
+    parser.add_argument(
+        '--join-multi-snaps',
+        action='store_true',
+        help='Automatically detect and join multi-snap videos (videos taken within 10 seconds of each other)'
+    )
 
     args = parser.parse_args()
 
@@ -1114,6 +1434,9 @@ if __name__ == '__main__':
     videos_only_mode = args.videos_only
     pictures_only_mode = args.pictures_only
     overlays_only_mode = args.overlays_only
+    timestamp_filenames_mode = args.timestamp_filenames
+    remove_duplicates_mode = args.remove_duplicates
+    join_multi_snaps_mode = args.join_multi_snaps
 
     # Optional: limit number of downloads for testing
     # Pass --test to download only first 3 files
@@ -1149,7 +1472,8 @@ if __name__ == '__main__':
                     memory['url'], output_path, file_num, extension, merge_overlays_mode,
                     defer_video_overlays_mode,
                     metadata['date'], metadata['latitude'], metadata['longitude'],
-                    False  # overlays_only not used in test mode
+                    False,  # overlays_only not used in test mode
+                    timestamp_filenames_mode
                 )
 
                 if len(files_saved) > 1:
@@ -1195,5 +1519,8 @@ if __name__ == '__main__':
             defer_video_overlays=defer_video_overlays_mode,
             videos_only=videos_only_mode,
             pictures_only=pictures_only_mode,
-            overlays_only=overlays_only_mode
+            overlays_only=overlays_only_mode,
+            use_timestamp_filenames=timestamp_filenames_mode,
+            remove_duplicates=remove_duplicates_mode,
+            join_multi_snaps=join_multi_snaps_mode
         )
