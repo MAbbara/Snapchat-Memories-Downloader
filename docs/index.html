@@ -939,6 +939,7 @@
 
     let memories = [];
     let existingMetadata = null;
+    let existingSettings = null; // Store settings from metadata.json
     let currentIndex = 0;
     let zip = null;
     let deferredVideoOverlays = []; // Track videos with overlays for deferred processing
@@ -1727,11 +1728,37 @@
         metadataFileName.textContent = file.name;
         try {
           const text = await file.text();
-          existingMetadata = JSON.parse(text);
+          const parsed = JSON.parse(text);
+
+          // Support both old format (array) and new format (object with settings)
+          if (Array.isArray(parsed)) {
+            // Old format: just the memories array
+            existingMetadata = parsed;
+            existingSettings = null;
+          } else if (parsed.memories && Array.isArray(parsed.memories)) {
+            // New format: object with memories and settings
+            existingMetadata = parsed.memories;
+            existingSettings = parsed.settings || null;
+          } else {
+            throw new Error("Invalid metadata.json format");
+          }
+
           addLog(
             `Loaded metadata.json with ${existingMetadata.length} entries`,
             "success"
           );
+
+          // Restore settings to UI if they exist
+          if (existingSettings) {
+            document.getElementById("mergeOverlaysCheckbox").checked = existingSettings.mergeOverlays || false;
+            document.getElementById("deferVideoOverlaysCheckbox").checked = existingSettings.deferVideoOverlays || false;
+            document.getElementById("overlaysOnlyCheckbox").checked = existingSettings.overlaysOnly || false;
+            document.getElementById("videosOnlyCheckbox").checked = existingSettings.videosOnly || false;
+            document.getElementById("picturesOnlyCheckbox").checked = existingSettings.picturesOnly || false;
+            document.getElementById("batchSizeSelect").value = existingSettings.batchSize || "50";
+            document.getElementById("ffmpegResetIntervalSelect").value = existingSettings.ffmpegResetInterval || "5";
+            addLog("Restored settings from metadata.json", "info");
+          }
 
           // Enable start button for metadata-only resume (no HTML required)
           const pending = existingMetadata.filter(m =>
@@ -1753,6 +1780,7 @@
         } catch (error) {
           addLog(`Error loading metadata.json: ${error.message}`, "error");
           existingMetadata = null;
+          existingSettings = null;
         }
       }
     });
@@ -2237,11 +2265,30 @@
     }
 
     /**
+     * Capture current settings from UI
+     */
+    function captureCurrentSettings() {
+      return {
+        mergeOverlays: document.getElementById("mergeOverlaysCheckbox").checked,
+        deferVideoOverlays: document.getElementById("deferVideoOverlaysCheckbox").checked,
+        overlaysOnly: document.getElementById("overlaysOnlyCheckbox").checked,
+        videosOnly: document.getElementById("videosOnlyCheckbox").checked,
+        picturesOnly: document.getElementById("picturesOnlyCheckbox").checked,
+        batchSize: document.getElementById("batchSizeSelect").value,
+        ffmpegResetInterval: document.getElementById("ffmpegResetIntervalSelect").value
+      };
+    }
+
+    /**
      * Download the current ZIP batch
      */
     async function downloadCurrentBatch(metadataList, batchNum, subBatchNum, suffix = '') {
-      // Add metadata.json to zip
-      zip.file("metadata.json", JSON.stringify(metadataList, null, 2));
+      // Add metadata.json to zip with settings
+      const metadataWithSettings = {
+        settings: captureCurrentSettings(),
+        memories: metadataList
+      };
+      zip.file("metadata.json", JSON.stringify(metadataWithSettings, null, 2));
 
       // Generate filename
       let filename;
@@ -2379,8 +2426,12 @@
               type: "merged",
             }];
 
-            // Add metadata.json
-            videoZip.file("metadata.json", JSON.stringify(metadataList, null, 2));
+            // Add metadata.json with settings
+            const metadataWithSettings = {
+              settings: captureCurrentSettings(),
+              memories: metadataList
+            };
+            videoZip.file("metadata.json", JSON.stringify(metadataWithSettings, null, 2));
 
             addLog(`  Merged video: ${filename} (${formatBytes(mergedData.byteLength)})`, "success");
 
