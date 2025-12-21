@@ -6,11 +6,13 @@ Download ALL your Snapchat memories completely FREE - don't pay for paid
 services. This tool runs entirely on your computer, preserving all metadata
 (dates, GPS locations) while keeping your data 100% private.
 
-**Two ways to use:**
+**Three ways to use:**
 
 1. **🌐 [Web Version](https://andrefecto.github.io/Snapchat-Memories-Downloader/)**
    - Upload your HTML file in browser (100% private, client-side)
 2. **🐍 Python Script** - Command-line tool for local processing
+   (instructions below)
+3. **Desktop GUI (PyQt6)** - Windowed interface for the Python script
    (instructions below)
 
 ## 📥 Getting Your Snapchat Data
@@ -56,7 +58,7 @@ but are now separate options at the bottom of the list.
 
 - Downloads all memories from `memories_history.html`
 - Sequential naming: `01.jpg`, `02.mp4`, `03.jpg`, etc.
-- **Timestamp-based filenames** (Python) - Name files as `YYYY.MM.DD-HH:MM:SS.ext` for easy sorting by date
+- **Timestamp-based filenames** (Python) - Name files as `YYYY.MM.DD-HH-MM-SS.ext` for easy sorting by date
 - **Preserves ALL metadata**: dates, GPS coordinates, media type
 - **Embeds EXIF metadata into images** - GPS coordinates and dates show up in Photos apps
 - **Timezone-aware metadata** - Converts UTC timestamps to local time based on GPS coordinates
@@ -141,6 +143,19 @@ python download_memories.py
 
    **Note:** FFmpeg is only needed for merging video overlays.
    Without it, videos are saved as separate `-main` and `-overlay` files.
+
+### Desktop GUI (PyQt6)
+
+If you prefer a windowed app, run:
+
+```bash
+source venv/bin/activate
+python snapchat_memories_gui.py
+```
+
+The GUI exposes all CLI options with explanations. It still requires
+`memories_history.html` and uses `metadata.json` in the output folder for
+resume/retry.
 
 ### Basic Usage
 
@@ -271,10 +286,20 @@ Saves files to a custom location instead of `./memories/`
 python download_memories.py --timestamp-filenames
 ```
 
-Names files as `2024.11.30-14:30:45.jpg` instead of `01.jpg`
+Names files as `2024.11.30-14-30-45.jpg` instead of `01.jpg`
 
 - ✅ Files sort by date in file managers
 - ✅ Easy to identify when memories were taken
+
+#### Parallel Downloads
+
+```bash
+python download_memories.py --threads 4
+```
+
+Downloads multiple memories at once for faster throughput. Use `--threads 1`
+for sequential mode. Higher values use more bandwidth/CPU (especially if
+video overlay merging is enabled).
 
 #### Remove Duplicate Files
 
@@ -335,8 +360,8 @@ deactivate
 
 - All memories are saved to the `memories/` directory (or custom directory specified with `--output`)
 - **Sequential naming (default)**: `01.jpg`, `02.mp4`, `03.jpg`, etc.
-- **Timestamp naming (with `--timestamp-filenames`)**: `2024.11.30-14:30:45.jpg`, `2024.12.15-09:22:13.mp4`, etc.
-- Files with overlays are extracted as `XX-main.ext` and `XX-overlay.ext` (or `YYYY.MM.DD-HH:MM:SS-main.ext` with timestamp naming)
+- **Timestamp naming (with `--timestamp-filenames`)**: `2024.11.30-14-30-45.jpg`, `2024.12.15-09-22-13.mp4`, etc.
+- Files with overlays are extracted as `XX-main.ext` and `XX-overlay.ext` (or `YYYY.MM.DD-HH-MM-SS-main.ext` with timestamp naming)
 
 ### Metadata
 
@@ -430,7 +455,7 @@ For merged overlays (when using `--merge-overlays` flag):
 │   └── memories_history.html    # Snapchat export HTML file (not included)
 ├── memories/                     # Downloaded files (default output directory, created by script)
 │   ├── 01.mp4                    # Sequential naming (default)
-│   ├── 02.jpg                    # or 2024.11.30-14:30:45.jpg (with --timestamp-filenames)
+│   ├── 02.jpg                    # or 2024.11.30-14-30-45.jpg (with --timestamp-filenames)
 │   ├── 03.jpg
 │   └── metadata.json
 ├── venv/                        # Python virtual environment

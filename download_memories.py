@@ -26,10 +26,14 @@ import argparse
 from pathlib import Path
 from html.parser import HTMLParser
 from datetime import datetime
+from typing import Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import zipfile
 import io
 import subprocess
 import hashlib
+
+INVALID_FILENAME_CHARS = '<>:"/\\|?*'
 
 # === DEPENDENCY CHECKS ===
 # All dependencies use graceful degradation - missing deps disable features, not crash
@@ -764,7 +768,7 @@ def download_and_extract(
         latitude: GPS latitude for EXIF
         longitude: GPS longitude for EXIF
         overlays_only: If True, skip files without overlays
-        use_timestamp_filenames: If True, use YYYY.MM.DD-HH:MM:SS.ext naming
+        use_timestamp_filenames: If True, use YYYY.MM.DD-HH-MM-SS.ext naming
         check_duplicates: If True, skip download if identical file exists
         use_local_timezone: If True, convert UTC to local timezone in EXIF/metadata
 
@@ -1060,7 +1064,7 @@ def get_file_extension(media_type: str) -> str:
     return '.jpg'
 
 
-def parse_date_to_timestamp(date_str: str) -> float | None:
+def parse_date_to_timestamp(date_str: str) -> Optional[float]:
     """
     Parse Snapchat date string to Unix timestamp.
     Format: "2025-11-30 00:31:09 UTC"
@@ -1076,10 +1080,16 @@ def parse_date_to_timestamp(date_str: str) -> float | None:
         return None
 
 
-def set_file_timestamp(file_path: Path, timestamp: float | None) -> None:
+def set_file_timestamp(file_path: Path, timestamp: Optional[float]) -> None:
     """Set file modification and access times to the given timestamp."""
     if timestamp:
         os.utime(file_path, (timestamp, timestamp))
+
+
+def sanitize_filename(filename: str) -> str:
+    sanitized = ''.join('-' if ch in INVALID_FILENAME_CHARS else ch for ch in filename)
+    sanitized = sanitized.rstrip(' .')
+    return sanitized or "file"
 
 
 def generate_filename(date_str: str, extension: str, use_timestamp: bool = False, fallback_num: str = "00") -> str:
@@ -1093,29 +1103,29 @@ def generate_filename(date_str: str, extension: str, use_timestamp: bool = False
         fallback_num: Sequential number to use if use_timestamp is False
 
     Returns:
-        Filename string (e.g., "2025.11.30-00:31:09.mp4" or "01.mp4")
+        Filename string (e.g., "2025.11.30-00-31-09.mp4" or "01.mp4")
     """
     if use_timestamp:
         try:
-            # Parse date string: "2025-11-30 00:31:09 UTC" -> "2025.11.30-00:31:09"
+            # Parse date string: "2025-11-30 00:31:09 UTC" -> "2025.11.30-00-31-09"
             date_str_clean = date_str.replace(' UTC', '').strip()
             # Replace first two hyphens and space with dots/hyphen
-            # "2025-11-30 00:31:09" -> "2025.11.30-00:31:09"
+            # "2025-11-30 00:31:09" -> "2025.11.30-00-31-09"
             parts = date_str_clean.split(' ')
             if len(parts) == 2:
                 date_part = parts[0].replace('-', '.')  # "2025.11.30"
-                time_part = parts[1]  # "00:31:09"
+                time_part = parts[1].replace(':', '-')  # "00-31-09"
                 filename = f"{date_part}-{time_part}{extension}"
-                return filename
+                return sanitize_filename(filename)
             else:
                 # Fallback to sequential if date format is unexpected
                 print(f"    Warning: Unexpected date format '{date_str}', using sequential number")
-                return f"{fallback_num}{extension}"
+                return sanitize_filename(f"{fallback_num}{extension}")
         except Exception as e:
             print(f"    Warning: Could not parse date for filename '{date_str}': {e}, using sequential number")
-            return f"{fallback_num}{extension}"
+            return sanitize_filename(f"{fallback_num}{extension}")
     else:
-        return f"{fallback_num}{extension}"
+        return sanitize_filename(f"{fallback_num}{extension}")
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -1133,7 +1143,11 @@ def compute_data_hash(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
 
-def is_duplicate_file(data: bytes, output_path: Path, check_duplicates: bool) -> tuple[bool, str | None]:
+def is_duplicate_file(
+    data: bytes,
+    output_path: Path,
+    check_duplicates: bool
+) -> Tuple[bool, Optional[str]]:
     """
     Check if data is a duplicate of any existing file in the output directory.
 
@@ -1154,7 +1168,7 @@ def is_duplicate_file(data: bytes, output_path: Path, check_duplicates: bool) ->
         check_duplicates: If False, skip duplicate detection entirely
 
     Returns:
-        Tuple of (is_duplicate: bool, existing_file_path: str | None)
+        Tuple of (is_duplicate: bool, existing_file_path: Optional[str])
         If duplicate found, returns (True, "existing_filename.ext")
         If unique, returns (False, None)
     """
@@ -1589,6 +1603,7 @@ def download_all_memories(
     overlays_only: bool = False,
     use_timestamp_filenames: bool = False,
     remove_duplicates: bool = False,
+    threads: int = 2,
     should_join_multi_snaps: bool = False,
     use_local_timezone: bool = False
 ) -> None:
@@ -1604,6 +1619,8 @@ def download_all_memories(
 
     If use_local_timezone is True, EXIF metadata includes timezone-aware timestamps
     based on GPS coordinates, and video metadata is updated with local time.
+
+    If threads > 1, downloads are processed in parallel (best for fast connections).
     """
 
     # Parse HTML to get all memories
@@ -1669,80 +1686,195 @@ def download_all_memories(
 
     total_items = len(items_to_download)
     deferred_videos = []  # Track videos to merge later
+    threads = max(1, int(threads))
 
-    for count, (idx, metadata) in enumerate(items_to_download, start=1):
-        memory = memories[idx]
-        file_num = f"{metadata['number']:02d}"
-        extension = get_file_extension(metadata.get('media_type', 'Image'))
+    if threads <= 1:
+        for count, (idx, metadata) in enumerate(items_to_download, start=1):
+            memory = memories[idx]
+            file_num = f"{metadata['number']:02d}"
+            extension = get_file_extension(metadata.get('media_type', 'Image'))
 
-        print(f"\n[{count}/{total_items}] #{metadata['number']}")
-        print(f"  Date: {metadata['date']}")
-        print(f"  Type: {metadata['media_type']}")
-        print(f"  Location: {metadata['latitude']}, {metadata['longitude']}")
+            print(f"\n[{count}/{total_items}] #{metadata['number']}")
+            print(f"  Date: {metadata['date']}")
+            print(f"  Type: {metadata['media_type']}")
+            print(f"  Location: {metadata['latitude']}, {metadata['longitude']}")
 
-        # Skip if already successful (unless videos_only or pictures_only mode)
-        if metadata.get('status') == 'success' and metadata.get('files') and not videos_only and not pictures_only:
-            print("  Already downloaded, skipping...")
-            continue
-
-        # Mark as in progress
-        metadata['status'] = 'in_progress'
-        save_metadata(metadata_list, output_path)
-
-        try:
-            # Download and extract file(s)
-            files_saved = download_and_extract(
-                memory['url'], output_path, file_num, extension, merge_overlays,
-                defer_video_overlays,
-                metadata['date'], metadata['latitude'], metadata['longitude'],
-                overlays_only,
-                use_timestamp_filenames,
-                remove_duplicates,
-                use_local_timezone
-            )
-
-            # Check if file was skipped due to overlays_only mode
-            if len(files_saved) == 0:
-                print("  Skipped: No overlay detected (overlays-only mode)")
-                metadata['status'] = 'skipped'
-                metadata['skip_reason'] = 'no_overlay'
+            # Skip if already successful (unless videos_only or pictures_only mode)
+            if metadata.get('status') == 'success' and metadata.get('files') and not videos_only and not pictures_only:
+                print("  Already downloaded, skipping...")
                 continue
 
-            # Display what was downloaded
-            if len(files_saved) > 1:
-                print(f"  ZIP extracted: {len(files_saved)} files")
-                for file_info in files_saved:
-                    print(f"    - {file_info['path']} ({file_info['size']:,} bytes)")
-            else:
-                downloaded_file = files_saved[0]
-                print(
-                    f"  Downloaded: {downloaded_file['path']} "
-                    f"({downloaded_file['size']:,} bytes)"
+            # Mark as in progress
+            metadata['status'] = 'in_progress'
+            save_metadata(metadata_list, output_path)
+
+            try:
+                # Download and extract file(s)
+                files_saved = download_and_extract(
+                    memory['url'], output_path, file_num, extension, merge_overlays,
+                    defer_video_overlays,
+                    metadata['date'], metadata['latitude'], metadata['longitude'],
+                    overlays_only,
+                    use_timestamp_filenames,
+                    remove_duplicates,
+                    use_local_timezone
                 )
 
-            # Set file timestamp to match the original date
-            timestamp = parse_date_to_timestamp(metadata['date'])
-            if timestamp:
-                for file_info in files_saved:
-                    file_path = output_path / file_info['path']
-                    set_file_timestamp(file_path, timestamp)
-                print(f"  Timestamp set to: {metadata['date']}")
+                # Check if file was skipped due to overlays_only mode
+                if len(files_saved) == 0:
+                    print("  Skipped: No overlay detected (overlays-only mode)")
+                    metadata['status'] = 'skipped'
+                    metadata['skip_reason'] = 'no_overlay'
+                    continue
 
-            # Update metadata with file info
-            metadata['status'] = 'success'
-            metadata['files'] = files_saved
+                # Display what was downloaded
+                if len(files_saved) > 1:
+                    print(f"  ZIP extracted: {len(files_saved)} files")
+                    for file_info in files_saved:
+                        print(f"    - {file_info['path']} ({file_info['size']:,} bytes)")
+                else:
+                    downloaded_file = files_saved[0]
+                    print(
+                        f"  Downloaded: {downloaded_file['path']} "
+                        f"({downloaded_file['size']:,} bytes)"
+                    )
 
-            # Track deferred videos for later processing
-            if any(f.get('deferred') for f in files_saved):
-                deferred_videos.append((file_num, metadata, files_saved))
+                # Set file timestamp to match the original date
+                timestamp = parse_date_to_timestamp(metadata['date'])
+                if timestamp:
+                    for file_info in files_saved:
+                        file_path = output_path / file_info['path']
+                        set_file_timestamp(file_path, timestamp)
+                    print(f"  Timestamp set to: {metadata['date']}")
 
-        except (OSError, requests.RequestException, zipfile.BadZipFile) as e:
-            print(f"  ERROR: {str(e)}")
-            metadata['status'] = 'failed'
-            metadata['error'] = str(e)
+                # Update metadata with file info
+                metadata['status'] = 'success'
+                metadata['files'] = files_saved
 
-        # Save metadata after each download
-        save_metadata(metadata_list, output_path)
+                # Track deferred videos for later processing
+                if any(f.get('deferred') for f in files_saved):
+                    deferred_videos.append((file_num, metadata, files_saved))
+
+            except (OSError, requests.RequestException, zipfile.BadZipFile) as e:
+                print(f"  ERROR: {str(e)}")
+                metadata['status'] = 'failed'
+                metadata['error'] = str(e)
+
+            # Save metadata after each download
+            save_metadata(metadata_list, output_path)
+    else:
+        print(f"Using {threads} threads for downloads")
+        completed = 0
+
+        def download_worker(idx: int, metadata: dict) -> dict:
+            memory = memories[idx]
+            file_num = f"{metadata['number']:02d}"
+            extension = get_file_extension(metadata.get('media_type', 'Image'))
+
+            print(f"\nStarting #{metadata['number']}")
+            print(f"  Date: {metadata['date']}")
+            print(f"  Type: {metadata['media_type']}")
+            print(f"  Location: {metadata['latitude']}, {metadata['longitude']}")
+
+            try:
+                files_saved = download_and_extract(
+                    memory['url'], output_path, file_num, extension, merge_overlays,
+                    defer_video_overlays,
+                    metadata['date'], metadata['latitude'], metadata['longitude'],
+                    overlays_only,
+                    use_timestamp_filenames,
+                    remove_duplicates,
+                    use_local_timezone
+                )
+
+                if len(files_saved) == 0:
+                    print("  Skipped: No overlay detected (overlays-only mode)")
+                    return {
+                        'status': 'skipped',
+                        'skip_reason': 'no_overlay',
+                        'file_num': file_num
+                    }
+
+                if len(files_saved) > 1:
+                    print(f"  ZIP extracted: {len(files_saved)} files")
+                    for file_info in files_saved:
+                        print(f"    - {file_info['path']} ({file_info['size']:,} bytes)")
+                else:
+                    downloaded_file = files_saved[0]
+                    print(
+                        f"  Downloaded: {downloaded_file['path']} "
+                        f"({downloaded_file['size']:,} bytes)"
+                    )
+
+                timestamp = parse_date_to_timestamp(metadata['date'])
+                if timestamp:
+                    for file_info in files_saved:
+                        file_path = output_path / file_info['path']
+                        set_file_timestamp(file_path, timestamp)
+                    print(f"  Timestamp set to: {metadata['date']}")
+
+                return {
+                    'status': 'success',
+                    'files_saved': files_saved,
+                    'file_num': file_num,
+                    'deferred': any(f.get('deferred') for f in files_saved)
+                }
+
+            except (OSError, requests.RequestException, zipfile.BadZipFile) as e:
+                print(f"  ERROR: {str(e)}")
+                return {
+                    'status': 'failed',
+                    'error': str(e),
+                    'file_num': file_num
+                }
+
+        futures = {}
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            for idx, metadata in items_to_download:
+                if metadata.get('status') == 'success' and metadata.get('files') and not videos_only and not pictures_only:
+                    completed += 1
+                    print(f"[{completed}/{total_items}] #{metadata['number']} Already downloaded, skipping...")
+                    continue
+
+                metadata['status'] = 'in_progress'
+                save_metadata(metadata_list, output_path)
+                futures[executor.submit(download_worker, idx, metadata)] = (idx, metadata)
+
+            for future in as_completed(futures):
+                idx, metadata = futures[future]
+                try:
+                    result = future.result()
+                except Exception as e:
+                    result = {
+                        'status': 'failed',
+                        'error': str(e),
+                        'file_num': f"{metadata.get('number', 0):02d}"
+                    }
+
+                status = result.get('status')
+                if status == 'success':
+                    metadata['status'] = 'success'
+                    metadata['files'] = result.get('files_saved', [])
+                    if result.get('deferred'):
+                        deferred_videos.append((result.get('file_num'), metadata, result.get('files_saved', [])))
+                elif status == 'skipped':
+                    metadata['status'] = 'skipped'
+                    metadata['skip_reason'] = result.get('skip_reason', 'no_overlay')
+                else:
+                    metadata['status'] = 'failed'
+                    metadata['error'] = result.get('error', 'Unknown error')
+
+                save_metadata(metadata_list, output_path)
+                completed += 1
+
+                if status == 'success':
+                    summary = "Completed"
+                elif status == 'skipped':
+                    summary = "Skipped"
+                else:
+                    summary = f"Failed: {metadata.get('error', 'Unknown error')}"
+
+                print(f"[{completed}/{total_items}] #{metadata['number']} {summary}")
 
     # Process deferred video overlays
     if deferred_videos:
@@ -1891,6 +2023,13 @@ if __name__ == '__main__':
         help='Test mode: download only first 3 files'
     )
     parser.add_argument(
+        '--threads',
+        type=int,
+        default=1,
+        metavar='N',
+        help='Number of parallel downloads (default: 1)'
+    )
+    parser.add_argument(
         '--merge-overlays',
         action='store_true',
         help='Merge overlay images and videos on top of main content (requires FFmpeg for videos)'
@@ -1924,7 +2063,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--timestamp-filenames',
         action='store_true',
-        help='Name files as YYYY.MM.DD-HH:MM:SS.ext based on capture date for easy sorting'
+        help='Name files as YYYY.MM.DD-HH-MM-SS.ext based on capture date for easy sorting'
     )
     parser.add_argument(
         '--remove-duplicates',
@@ -1976,6 +2115,7 @@ if __name__ == '__main__':
     overlays_only_mode = args.overlays_only
     timestamp_filenames_mode = args.timestamp_filenames
     remove_duplicates_mode = args.remove_duplicates
+    threads_mode = max(1, int(args.threads))
     join_multi_snaps_mode = args.join_multi_snaps
     local_timezone_mode = args.local_timezone
 
@@ -2066,6 +2206,7 @@ if __name__ == '__main__':
             overlays_only=overlays_only_mode,
             use_timestamp_filenames=timestamp_filenames_mode,
             remove_duplicates=remove_duplicates_mode,
+            threads=threads_mode,
             should_join_multi_snaps=join_multi_snaps_mode,
             use_local_timezone=local_timezone_mode
         )
