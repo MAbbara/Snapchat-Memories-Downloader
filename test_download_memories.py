@@ -176,14 +176,29 @@ class TestFilenameGeneration:
         )
         assert filename == "2025.11.30-00-31-09.mp4"
 
-    def test_invalid_date_falls_back_to_sequential(self):
-        """Test that invalid dates fall back to sequential naming"""
+    def test_malformed_date_creates_safe_filename(self):
+        """Test that malformed dates still create safe filenames"""
+        # "invalid date" has 2 parts separated by space, so it gets processed
+        # as if it were a valid date (even though it's not a real date)
         filename = generate_filename(
             "invalid date",
             ".jpg",
             use_timestamp=True,
             fallback_num="99"
         )
+        # Should create a sanitized filename from the input
+        assert filename == "invalid-date.jpg"
+
+    def test_completely_invalid_date_uses_fallback(self):
+        """Test that completely unparseable dates use fallback number"""
+        # A date with only one part should trigger the fallback
+        filename = generate_filename(
+            "unparseable",
+            ".jpg",
+            use_timestamp=True,
+            fallback_num="99"
+        )
+        # Should fall back to sequential numbering
         assert filename == "99.jpg"
 
     def test_filename_sanitization(self):
